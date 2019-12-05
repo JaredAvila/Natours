@@ -12,6 +12,30 @@ const signToken = id => {
   });
 };
 
+const createAndSendToken = (user, statusCode, res) => {
+  const token = signToken(user._id);
+  const cookieOptions = {
+    expires: new Date(
+      Date.now() + process.env.JWT_COOKIE_EXPIRES_IN * 24 * 60 * 60 * 1000
+    ),
+    httpOnly: true
+  };
+  if (process.env.NODE_ENV === 'production') cookieOptions.secure = true;
+
+  res.cookie('jwt', token, cookieOptions);
+
+  //remove password from output
+  user.password = undefined;
+
+  res.status(statusCode).json({
+    status: 'success',
+    token,
+    data: {
+      user
+    }
+  });
+};
+
 exports.signup = catchAsync(async (req, res, next) => {
   const newUser = await User.create({
     name: req.body.name,
@@ -23,15 +47,7 @@ exports.signup = catchAsync(async (req, res, next) => {
     photo: req.body.photo
   });
 
-  const token = signToken(newUser._id);
-
-  res.status(201).json({
-    status: 'success',
-    token,
-    data: {
-      user: newUser
-    }
-  });
+  createAndSendToken(newUser, 201, res);
 });
 
 exports.login = catchAsync(async (req, res, next) => {
@@ -49,11 +65,7 @@ exports.login = catchAsync(async (req, res, next) => {
     return next(new AppError('Incorrect email or password', 401));
   }
   // 3) if everything is ok send token to client
-  const token = signToken(user._id);
-  res.status(200).json({
-    status: 'success',
-    token
-  });
+  createAndSendToken(user, 200, res);
 });
 
 exports.protect = catchAsync(async (req, res, next) => {
@@ -170,9 +182,23 @@ exports.resetPassword = catchAsync(async (req, res, next) => {
   // 3) update changedPasswordAt prop for user
 
   // 4) Log the user in, send JWT
-  const token = signToken(user._id);
-  res.status(200).json({
-    status: 'success',
-    token
-  });
+  createAndSendToken(user, 200, res);
+});
+
+exports.updatePassword = catchAsync(async (req, res, next) => {
+  // 1) get user
+  const user = await User.findById(req.user.id).select('+password');
+  // 2) check if posted password is correct
+  if (
+    !user ||
+    !(await user.correctPassword(req.body.password, user.password))
+  ) {
+    return next(new AppError('Please enter correct password.', 401));
+  }
+  // 3) update password
+  user.password = req.body.newPassword;
+  user.password2 = req.body.newPassowrd2;
+  await user.save();
+  // 4) log user in
+  createAndSendToken(user, 200, res);
 });
